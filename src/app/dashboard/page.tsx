@@ -116,8 +116,15 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
       {/* Menu Superior */}
+      {/* Menu Superior */}
       <nav className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-        <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
+        <div className="flex items-center gap-8">
+          <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
+          <div className="hidden md:flex gap-4">
+            <a href="/dashboard" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Visão Geral</a>
+            <a href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Minhas Metas</a>
+          </div>
+        </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-slate-600 hidden md:block">{user?.email}</span>
           <button onClick={handleLogout} className="text-sm font-medium text-red-600 hover:bg-red-50 px-3 py-1 rounded-md transition">
