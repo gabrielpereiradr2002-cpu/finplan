@@ -17,12 +17,14 @@ export default function Dashboard() {
   const [descricao, setDescricao] = useState("");
   const [valor, setValor] = useState("");
   const [tipo, setTipo] = useState("receita");
-  
-  // NOVO: Estado para a data (começa com a data de hoje)
   const [dataLancamento, setDataLancamento] = useState(new Date().toISOString().split("T")[0]);
-  
   const [categoria, setCategoria] = useState("Outros");
   const categoriasPadrao = ["Moradia", "Alimentação", "Transporte", "Lazer", "Saúde", "Dívidas", "Investimentos", "Outros"];
+  
+  // NOVOS ESTADOS PARA RECORRÊNCIA
+  const [isRecorrente, setIsRecorrente] = useState(false);
+  const [mesesRepeticao, setMesesRepeticao] = useState(12); // Padrão: repete por 1 ano
+
   const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
@@ -43,7 +45,6 @@ export default function Dashboard() {
     if (!error && transacoesBanco) {
       setTransactions(transacoesBanco);
       
-      // NOVO: O Dashboard só soma no resumo o que é até o dia de hoje (Realizado)
       const hoje = new Date().toISOString().split("T")[0];
       const transacoesRealizadas = transacoesBanco.filter(t => t.date <= hoje);
       calcularResumo(transacoesRealizadas);
@@ -61,25 +62,51 @@ export default function Dashboard() {
     setResumo({ receitas: rec, despesas: desp, saldo: rec - desp });
   };
 
+  // A MÁGICA DA RECORRÊNCIA ACONTECE AQUI
   const adicionarLancamento = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
 
-    const { error } = await supabase.from("transactions").insert([{
+    const valorNumerico = parseFloat(valor.replace(",", "."));
+    const transacoesParaInserir = [];
+    
+    // Pega a data base escolhida pelo usuário
+    let dataAtual = new Date(dataLancamento + "T12:00:00"); // Força o fuso horário para evitar bugs de dia anterior
+
+    // Define quantas vezes o laço vai rodar (1 vez se for normal, ou X vezes se for recorrente)
+    const repeticoes = isRecorrente ? mesesRepeticao : 1;
+
+    for (let i = 0; i < repeticoes; i++) {
+      transacoesParaInserir.push({
         user_id: user.id,
-        description: descricao,
-        amount: parseFloat(valor.replace(",", ".")),
+        // Se for recorrente, adiciona a tag (1/12) na frente do nome
+        description: isRecorrente ? `${descricao} (${i + 1}/${repeticoes})` : descricao,
+        amount: valorNumerico,
         type: tipo,
         category: tipo === 'despesa' ? categoria : 'Renda',
-        date: dataLancamento, // Agora envia a data que o usuário escolheu
-    }]);
+        // Converte a data de volta para o formato YYYY-MM-DD
+        date: dataAtual.toISOString().split("T")[0],
+        is_recurring: isRecorrente
+      });
+
+      // Pula para o próximo mês para a próxima repetição do laço
+      dataAtual.setMonth(dataAtual.getMonth() + 1);
+    }
+
+    // O Supabase consegue salvar dezenas de transações de uma só vez (Bulk Insert)
+    const { error } = await supabase.from("transactions").insert(transacoesParaInserir);
 
     if (!error) {
-      setDescricao(""); setValor("");
-      // Volta para a data de hoje após salvar
+      setDescricao(""); 
+      setValor("");
+      setIsRecorrente(false);
+      setMesesRepeticao(12);
       setDataLancamento(new Date().toISOString().split("T")[0]);
       carregarDados();
+    } else {
+      alert("Erro ao salvar: " + error.message);
     }
+    
     setSalvando(false);
   };
 
@@ -131,28 +158,29 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* FORMULÁRIO */}
           <div className="lg:col-span-1">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 sticky top-24">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Novo Lançamento</h3>
               <form onSubmit={adicionarLancamento} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Descrição</label>
-                  <input type="text" required value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex: Salário, Aluguel..." className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
+                  <input type="text" required value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex: Salário, Netflix..." className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
                 </div>
                 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Valor (R$)</label>
-                  <input type="number" step="0.01" required value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0.00" className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Valor (R$)</label>
+                    <input type="number" step="0.01" required value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0.00" className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Data</label>
+                    <input type="date" required value={dataLancamento} onChange={(e) => setDataLancamento(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
+                  </div>
                 </div>
 
-                {/* NOVO CAMPO: Data */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Data (Pode ser no futuro)</label>
-                  <input type="date" required value={dataLancamento} onChange={(e) => setDataLancamento(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1 mt-2">Tipo</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Tipo</label>
                   <div className="grid grid-cols-2 gap-2">
                     <button type="button" onClick={() => setTipo("receita")} className={`py-2 rounded-lg font-medium text-sm transition border ${tipo === "receita" ? "bg-green-100 text-green-700 border-green-200" : "bg-white text-slate-600 border-slate-200"}`}>Receita</button>
                     <button type="button" onClick={() => setTipo("despesa")} className={`py-2 rounded-lg font-medium text-sm transition border ${tipo === "despesa" ? "bg-red-100 text-red-700 border-red-200" : "bg-white text-slate-600 border-slate-200"}`}>Despesa</button>
@@ -168,13 +196,41 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                <button type="submit" disabled={salvando} className="w-full bg-blue-600 text-white font-semibold py-3 rounded-lg hover:bg-blue-700 transition mt-4 disabled:opacity-50">
+                {/* CHECKBOX DE RECORRÊNCIA */}
+                <div className="pt-2 border-t border-slate-100 mt-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={isRecorrente}
+                      onChange={(e) => setIsRecorrente(e.target.checked)}
+                      className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600"
+                    />
+                    <span className="text-sm font-medium text-slate-700">Lançamento recorrente/parcelado</span>
+                  </label>
+
+                  {isRecorrente && (
+                    <div className="mt-3 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                      <label className="block text-xs font-semibold text-blue-800 mb-1">Por quantos meses?</label>
+                      <input 
+                        type="number" 
+                        min="2" max="60"
+                        value={mesesRepeticao} 
+                        onChange={(e) => setMesesRepeticao(Number(e.target.value))} 
+                        className="w-full px-3 py-1.5 rounded-md border border-blue-200 text-sm outline-none focus:border-blue-400" 
+                      />
+                      <p className="text-xs text-blue-600 mt-2">Isto preencherá o seu Fluxo de Caixa para os próximos {mesesRepeticao} meses automaticamente.</p>
+                    </div>
+                  )}
+                </div>
+
+                <button type="submit" disabled={salvando} className="w-full bg-blue-600 text-white font-semibold py-3 rounded-lg hover:bg-blue-700 transition mt-4 disabled:opacity-50 shadow-sm">
                   {salvando ? "Salvando..." : "Adicionar Lançamento"}
                 </button>
               </form>
             </div>
           </div>
 
+          {/* LISTA DE LANÇAMENTOS */}
           <div className="lg:col-span-2">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Últimos Lançamentos</h3>
@@ -182,15 +238,18 @@ export default function Dashboard() {
                 <div className="text-center py-10 text-slate-500">Nenhum lançamento encontrado.</div>
               ) : (
                 <div className="space-y-3">
-                  {transactions.map((t) => (
+                  {transactions.slice(0, 15).map((t) => ( // Mostra apenas os 15 mais recentes aqui
                     <div key={t.id} className="flex justify-between items-center p-4 hover:bg-slate-50 rounded-xl border border-slate-100 transition">
                       <div className="flex items-center gap-4">
                         <div className={`w-2 h-10 rounded-full ${t.type === 'receita' ? 'bg-green-500' : 'bg-red-500'}`}></div>
                         <div>
-                          <p className="font-semibold text-slate-800">{t.description}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold text-slate-800">{t.description}</p>
+                            {t.is_recurring && <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Recorrente</span>}
+                          </div>
                           <p className="text-xs font-medium text-slate-500">
                             {new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR')} 
-                            {t.date > new Date().toISOString().split("T")[0] && " (Agendado)"}
+                            {t.category && ` • ${t.category}`}
                           </p>
                         </div>
                       </div>
