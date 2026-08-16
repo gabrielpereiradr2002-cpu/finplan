@@ -37,30 +37,33 @@ export default function Simulador() {
     if (!user) return router.push("/login");
     setUser(user);
 
-    // Buscar transações do mês atual para calcular a "sobra"
-    const mesAtual = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+    // Busca as transações sem filtro de texto, igual fazemos no Dashboard
     const { data: transacoes } = await supabase
       .from("transactions")
       .select("*")
-      .eq("user_id", user.id)
-      .like("date", `${mesAtual}%`);
+      .eq("user_id", user.id);
 
     if (transacoes) {
-      let rec = 0; let desp = 0;
-      // Lê apenas até a data de hoje para ser fiel à realidade do bolso
+      let rec = 0; 
+      let desp = 0;
+      
+      // Lê apenas até a data de hoje para ser fiel à realidade da sua conta bancária
       const hoje = new Date().toISOString().split("T")[0];
+      
       transacoes.forEach(t => {
         if (t.date <= hoje) {
           if (t.type === 'receita') rec += Number(t.amount);
           if (t.type === 'despesa') desp += Number(t.amount);
         }
       });
+      
+      // Define a sobra como o seu Saldo Real Atual
       setSobraMensal(rec - desp);
     }
     
     setLoading(false);
   };
-
+  
   const simularCompra = (e: React.FormEvent) => {
     e.preventDefault();
     

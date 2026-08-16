@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Link from "next/link";
-// IMPORTANDO OS COMPONENTES DO GRÁFICO
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 export default function Dashboard() {
@@ -15,9 +14,10 @@ export default function Dashboard() {
   
   const [transactions, setTransactions] = useState<any[]>([]);
   const [resumo, setResumo] = useState({ receitas: 0, despesas: 0, saldo: 0 });
-  
-  // ESTADO PARA GUARDAR OS DADOS DO GRÁFICO
   const [dadosGrafico, setDadosGrafico] = useState<any[]>([]);
+  
+  // NOVO: Estado para guardar os alertas inteligentes
+  const [alertas, setAlertas] = useState<any[]>([]);
 
   const [descricao, setDescricao] = useState("");
   const [valor, setValor] = useState("");
@@ -28,10 +28,8 @@ export default function Dashboard() {
   
   const [isRecorrente, setIsRecorrente] = useState(false);
   const [mesesRepeticao, setMesesRepeticao] = useState(12);
-
   const [salvando, setSalvando] = useState(false);
 
-  // PALETA DE CORES PARA O GRÁFICO
   const CORES = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
   useEffect(() => {
@@ -43,23 +41,87 @@ export default function Dashboard() {
     if (!user) return router.push("/login");
     setUser(user);
 
-    const { data: transacoesBanco, error } = await supabase
+    const mesAtual = new Date().toISOString().slice(0, 7); // "YYYY-MM"
+    const hoje = new Date().toISOString().split("T")[0];
+
+    // 1. Busca Transações
+    const { data: transacoesBanco } = await supabase
       .from("transactions")
       .select("*")
       .eq("user_id", user.id)
       .order("date", { ascending: false });
 
-    if (!error && transacoesBanco) {
+    // 2. Busca Orçamentos do mês (Planejamento)
+    const { data: orcamentos } = await supabase
+      .from("budgets")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("month", mesAtual);
+
+    // 3. Busca Metas
+    const { data: metas } = await supabase
+      .from("goals")
+      .select("*")
+      .eq("user_id", user.id);
+
+    if (transacoesBanco) {
       setTransactions(transacoesBanco);
       
-      const hoje = new Date().toISOString().split("T")[0];
       const transacoesRealizadas = transacoesBanco.filter(t => t.date <= hoje);
-      
       calcularResumo(transacoesRealizadas);
-      montarDadosGrafico(transacoesRealizadas); // Prepara o gráfico
+      montarDadosGrafico(transacoesRealizadas);
+      
+      // MÁGICA: Gera os alertas cruzando todas as informações
+      gerarAlertas(transacoesBanco.filter(t => t.date.startsWith(mesAtual) && t.date <= hoje), orcamentos || [], metas || []);
     }
     
     setLoading(false);
+  };
+
+  const gerarAlertas = (transacoesDoMes: any[], orcamentos: any[], metas: any[]) => {
+    const novosAlertas: any[] = [];
+
+    // Alerta 1: Metas Atingidas
+    metas.forEach(meta => {
+      if (Number(meta.current_amount) >= Number(meta.target_amount)) {
+        novosAlertas.push({
+          icone: '🎉',
+          mensagem: `Parabéns! Você atingiu sua meta: ${meta.title}!`,
+          estilo: 'bg-green-50 border-green-200 text-green-800'
+        });
+      }
+    });
+
+    // Agrupa gastos do mês por categoria
+    const gastosPorCategoria: Record<string, number> = {};
+    transacoesDoMes.forEach(t => {
+      if (t.type === 'despesa') {
+        gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
+      }
+    });
+
+    // Alerta 2: Estouro de Orçamento
+    orcamentos.forEach(orc => {
+      const gasto = gastosPorCategoria[orc.category] || 0;
+      const limite = Number(orc.amount);
+      const percentual = (gasto / limite) * 100;
+
+      if (percentual > 100) {
+        novosAlertas.push({
+          icone: '🚨',
+          mensagem: `Você estourou o limite de ${orc.category} em ${formatarMoeda(gasto - limite)}!`,
+          estilo: 'bg-red-50 border-red-200 text-red-800'
+        });
+      } else if (percentual >= 80) {
+        novosAlertas.push({
+          icone: '⚠️',
+          mensagem: `Atenção: Você já consumiu ${percentual.toFixed(0)}% do orçamento de ${orc.category}.`,
+          estilo: 'bg-yellow-50 border-yellow-200 text-yellow-800'
+        });
+      }
+    });
+
+    setAlertas(novosAlertas);
   };
 
   const calcularResumo = (transacoes: any[]) => {
@@ -71,21 +133,18 @@ export default function Dashboard() {
     setResumo({ receitas: rec, despesas: desp, saldo: rec - desp });
   };
 
-  // FUNÇÃO QUE AGRUPA AS DESPESAS POR CATEGORIA PARA O GRÁFICO
   const montarDadosGrafico = (transacoes: any[]) => {
     const gastosPorCategoria: Record<string, number> = {};
-    
     transacoes.forEach(t => {
       if (t.type === 'despesa') {
         gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
       }
     });
 
-    // Transforma o objeto em uma lista (array) para o Recharts ler
     const dadosFormatados = Object.keys(gastosPorCategoria).map(key => ({
       name: key,
       value: gastosPorCategoria[key]
-    })).sort((a, b) => b.value - a.value); // Ordena da maior despesa para a menor
+    })).sort((a, b) => b.value - a.value);
 
     setDadosGrafico(dadosFormatados);
   };
@@ -116,14 +175,10 @@ export default function Dashboard() {
     const { error } = await supabase.from("transactions").insert(transacoesParaInserir);
 
     if (!error) {
-      setDescricao(""); 
-      setValor("");
-      setIsRecorrente(false);
-      setMesesRepeticao(12);
+      setDescricao(""); setValor(""); setIsRecorrente(false); setMesesRepeticao(12);
       setDataLancamento(new Date().toISOString().split("T")[0]);
       carregarDados();
     }
-    
     setSalvando(false);
   };
 
@@ -159,6 +214,19 @@ export default function Dashboard() {
       </nav>
 
       <main className="max-w-5xl mx-auto p-6 mt-6">
+        
+        {/* ÁREA DOS ALERTAS INTELIGENTES */}
+        {alertas.length > 0 && (
+          <div className="mb-6 space-y-3">
+            {alertas.map((alerta, index) => (
+              <div key={index} className={`flex items-center gap-3 p-4 rounded-xl border shadow-sm ${alerta.estilo}`}>
+                <span className="text-2xl">{alerta.icone}</span>
+                <p className="font-semibold">{alerta.mensagem}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
             <p className="text-sm font-medium text-slate-500 mb-1">Saldo Real Atual</p>
@@ -234,24 +302,14 @@ export default function Dashboard() {
           </div>
 
           <div className="lg:col-span-2 flex flex-col gap-8">
-            
-            {/* O NOVO GRÁFICO DE CATEGORIAS */}
             {dadosGrafico.length > 0 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                 <h3 className="text-lg font-bold text-slate-800 mb-4">Onde seu dinheiro está indo</h3>
                 <div className="h-72 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie
-                        data={dadosGrafico}
-                        innerRadius={80}
-                        outerRadius={110}
-                        paddingAngle={5}
-                        dataKey="value"
-                      >
-                        {dadosGrafico.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={CORES[index % CORES.length]} />
-                        ))}
+                      <Pie data={dadosGrafico} innerRadius={80} outerRadius={110} paddingAngle={5} dataKey="value">
+                        {dadosGrafico.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES[index % CORES.length]} />)}
                       </Pie>
                       <Tooltip formatter={(value: any) => formatarMoeda(Number(value))} />
                       <Legend verticalAlign="bottom" height={36} iconType="circle" />
@@ -261,7 +319,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* LISTA DE LANÇAMENTOS */}
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Últimos Lançamentos</h3>
               {transactions.length === 0 ? (
