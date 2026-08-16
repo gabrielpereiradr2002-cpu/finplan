@@ -6,6 +6,10 @@ import { supabase } from "../../lib/supabase";
 import Link from "next/link";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
+// IMPORTAÇÕES DO GERADOR DE PDF
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
+
 export default function Dashboard() {
   const router = useRouter();
   
@@ -15,9 +19,9 @@ export default function Dashboard() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [resumo, setResumo] = useState({ receitas: 0, despesas: 0, saldo: 0 });
   const [dadosGrafico, setDadosGrafico] = useState<any[]>([]);
-  
-  // NOVO: Estado para guardar os alertas inteligentes
   const [alertas, setAlertas] = useState<any[]>([]);
+
+  const [mesSelecionado, setMesSelecionado] = useState(new Date().toISOString().slice(0, 7));
 
   const [descricao, setDescricao] = useState("");
   const [valor, setValor] = useState("");
@@ -29,157 +33,187 @@ export default function Dashboard() {
   const [isRecorrente, setIsRecorrente] = useState(false);
   const [mesesRepeticao, setMesesRepeticao] = useState(12);
   const [salvando, setSalvando] = useState(false);
+  const [editandoId, setEditandoId] = useState<string | null>(null);
 
   const CORES = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
   useEffect(() => {
     carregarDados();
-  }, []);
+  }, [mesSelecionado]);
 
   const carregarDados = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return router.push("/login");
     setUser(user);
 
-    const mesAtual = new Date().toISOString().slice(0, 7); // "YYYY-MM"
     const hoje = new Date().toISOString().split("T")[0];
 
-    // 1. Busca Transações
-    const { data: transacoesBanco } = await supabase
-      .from("transactions")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("date", { ascending: false });
-
-    // 2. Busca Orçamentos do mês (Planejamento)
-    const { data: orcamentos } = await supabase
-      .from("budgets")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("month", mesAtual);
-
-    // 3. Busca Metas
-    const { data: metas } = await supabase
-      .from("goals")
-      .select("*")
-      .eq("user_id", user.id);
+    const { data: transacoesBanco } = await supabase.from("transactions").select("*").eq("user_id", user.id).order("date", { ascending: false });
+    const { data: orcamentos } = await supabase.from("budgets").select("*").eq("user_id", user.id).eq("month", mesSelecionado);
+    const { data: metas } = await supabase.from("goals").select("*").eq("user_id", user.id);
 
     if (transacoesBanco) {
-      setTransactions(transacoesBanco);
-      
-      const transacoesRealizadas = transacoesBanco.filter(t => t.date <= hoje);
-      calcularResumo(transacoesRealizadas);
-      montarDadosGrafico(transacoesRealizadas);
-      
-      // MÁGICA: Gera os alertas cruzando todas as informações
-      gerarAlertas(transacoesBanco.filter(t => t.date.startsWith(mesAtual) && t.date <= hoje), orcamentos || [], metas || []);
+      let saldoGlobal = 0;
+      transacoesBanco.forEach(t => {
+        if (t.date <= hoje) saldoGlobal += t.type === 'receita' ? Number(t.amount) : -Number(t.amount);
+      });
+
+      const transacoesVisiveis = transacoesBanco.filter(t => t.date.startsWith(mesSelecionado) && t.date <= hoje);
+      setTransactions(transacoesVisiveis);
+
+      let recMes = 0; let despMes = 0;
+      transacoesVisiveis.forEach(t => {
+        if (t.type === 'receita') recMes += Number(t.amount);
+        if (t.type === 'despesa') despMes += Number(t.amount);
+      });
+
+      setResumo({ receitas: recMes, despesas: despMes, saldo: saldoGlobal });
+      montarDadosGrafico(transacoesVisiveis);
+      gerarAlertas(transacoesVisiveis, orcamentos || [], metas || []);
     }
-    
     setLoading(false);
   };
 
-  const gerarAlertas = (transacoesDoMes: any[], orcamentos: any[], metas: any[]) => {
+  const gerarAlertas = (transacoesVisiveis: any[], orcamentos: any[], metas: any[]) => {
     const novosAlertas: any[] = [];
-
-    // Alerta 1: Metas Atingidas
     metas.forEach(meta => {
       if (Number(meta.current_amount) >= Number(meta.target_amount)) {
-        novosAlertas.push({
-          icone: '🎉',
-          mensagem: `Parabéns! Você atingiu sua meta: ${meta.title}!`,
-          estilo: 'bg-green-50 border-green-200 text-green-800'
-        });
+        novosAlertas.push({ icone: '🎉', mensagem: `Parabéns! Você atingiu sua meta: ${meta.title}!`, estilo: 'bg-green-50 border-green-200 text-green-800' });
       }
     });
 
-    // Agrupa gastos do mês por categoria
     const gastosPorCategoria: Record<string, number> = {};
-    transacoesDoMes.forEach(t => {
-      if (t.type === 'despesa') {
-        gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
-      }
+    transacoesVisiveis.forEach(t => {
+      if (t.type === 'despesa') gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
     });
 
-    // Alerta 2: Estouro de Orçamento
     orcamentos.forEach(orc => {
       const gasto = gastosPorCategoria[orc.category] || 0;
       const limite = Number(orc.amount);
       const percentual = (gasto / limite) * 100;
-
-      if (percentual > 100) {
-        novosAlertas.push({
-          icone: '🚨',
-          mensagem: `Você estourou o limite de ${orc.category} em ${formatarMoeda(gasto - limite)}!`,
-          estilo: 'bg-red-50 border-red-200 text-red-800'
-        });
-      } else if (percentual >= 80) {
-        novosAlertas.push({
-          icone: '⚠️',
-          mensagem: `Atenção: Você já consumiu ${percentual.toFixed(0)}% do orçamento de ${orc.category}.`,
-          estilo: 'bg-yellow-50 border-yellow-200 text-yellow-800'
-        });
-      }
+      if (percentual > 100) novosAlertas.push({ icone: '🚨', mensagem: `No mês de ${mesSelecionado.split("-")[1]}, você estourou o limite de ${orc.category} em ${formatarMoeda(gasto - limite)}!`, estilo: 'bg-red-50 border-red-200 text-red-800' });
+      else if (percentual >= 80) novosAlertas.push({ icone: '⚠️', mensagem: `Atenção: Você consumiu ${percentual.toFixed(0)}% do orçamento de ${orc.category} neste mês.`, estilo: 'bg-yellow-50 border-yellow-200 text-yellow-800' });
     });
-
     setAlertas(novosAlertas);
-  };
-
-  const calcularResumo = (transacoes: any[]) => {
-    let rec = 0; let desp = 0;
-    transacoes.forEach((t) => {
-      if (t.type === "receita") rec += Number(t.amount);
-      if (t.type === "despesa") desp += Number(t.amount);
-    });
-    setResumo({ receitas: rec, despesas: desp, saldo: rec - desp });
   };
 
   const montarDadosGrafico = (transacoes: any[]) => {
     const gastosPorCategoria: Record<string, number> = {};
     transacoes.forEach(t => {
-      if (t.type === 'despesa') {
-        gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
-      }
+      if (t.type === 'despesa') gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
     });
-
-    const dadosFormatados = Object.keys(gastosPorCategoria).map(key => ({
-      name: key,
-      value: gastosPorCategoria[key]
-    })).sort((a, b) => b.value - a.value);
-
+    const dadosFormatados = Object.keys(gastosPorCategoria).map(key => ({ name: key, value: gastosPorCategoria[key] })).sort((a, b) => b.value - a.value);
     setDadosGrafico(dadosFormatados);
   };
 
-  const adicionarLancamento = async (e: React.FormEvent) => {
+  // ---------------------------------------------
+  // NOVO: FUNÇÃO PARA GERAR E BAIXAR O RELATÓRIO PDF
+  // ---------------------------------------------
+  const exportarPDF = () => {
+    const doc = new jsPDF();
+    
+    // Título do Documento
+    doc.setFontSize(20);
+    doc.setTextColor(37, 99, 235); // Azul da marca
+    doc.text(`Relatório Financeiro - FinPlan`, 14, 22);
+    
+    // Subtítulo e Datas
+    doc.setFontSize(11);
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Referência: Mês ${mesSelecionado.split("-")[1]}/${mesSelecionado.split("-")[0]}`, 14, 30);
+    doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, 14, 36);
+    
+    // Resumo Financeiro
+    doc.setFontSize(12);
+    doc.setTextColor(0, 0, 0);
+    doc.text(`Resumo do Mês:`, 14, 48);
+    
+    doc.setFontSize(11);
+    doc.setTextColor(22, 163, 74); // Verde
+    doc.text(`(+) Receitas: ${formatarMoeda(resumo.receitas)}`, 14, 56);
+    
+    doc.setTextColor(220, 38, 38); // Vermelho
+    doc.text(`(-) Despesas: ${formatarMoeda(resumo.despesas)}`, 14, 64);
+    
+    doc.setTextColor(30, 41, 59); // Escuro
+    doc.text(`(=) Saldo Global Atual: ${formatarMoeda(resumo.saldo)}`, 14, 72);
+
+    // Estruturando a Tabela de Lançamentos
+    const tableColumn = ["Data", "Descrição", "Categoria", "Tipo", "Valor"];
+    const tableRows: any[] = [];
+
+    transactions.forEach(t => {
+      const transacaoData = [
+        new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR'),
+        t.description,
+        t.category || "-",
+        t.type === 'receita' ? 'Receita' : 'Despesa',
+        formatarMoeda(t.amount)
+      ];
+      tableRows.push(transacaoData);
+    });
+
+    // Desenhando a Tabela
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: 82,
+      theme: 'grid',
+      styles: { fontSize: 10, cellPadding: 3 },
+      headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+    });
+
+    // Baixando o arquivo
+    doc.save(`FinPlan_Relatorio_${mesSelecionado}.pdf`);
+  };
+
+  const salvarLancamento = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
+    const valorNumerico = parseFloat(valor.toString().replace(",", "."));
 
-    const valorNumerico = parseFloat(valor.replace(",", "."));
-    const transacoesParaInserir = [];
-    
-    let dataAtual = new Date(dataLancamento + "T12:00:00");
-    const repeticoes = isRecorrente ? mesesRepeticao : 1;
+    if (editandoId) {
+      const { error } = await supabase.from("transactions").update({
+        description: descricao, amount: valorNumerico, type: tipo,
+        category: tipo === 'despesa' ? categoria : 'Renda', date: dataLancamento
+      }).eq("id", editandoId);
+      if (!error) { limparFormulario(); carregarDados(); }
+    } else {
+      const transacoesParaInserir = [];
+      let dataAtual = new Date(dataLancamento + "T12:00:00");
+      const repeticoes = isRecorrente ? mesesRepeticao : 1;
 
-    for (let i = 0; i < repeticoes; i++) {
-      transacoesParaInserir.push({
-        user_id: user.id,
-        description: isRecorrente ? `${descricao} (${i + 1}/${repeticoes})` : descricao,
-        amount: valorNumerico,
-        type: tipo,
-        category: tipo === 'despesa' ? categoria : 'Renda',
-        date: dataAtual.toISOString().split("T")[0],
-        is_recurring: isRecorrente
-      });
-      dataAtual.setMonth(dataAtual.getMonth() + 1);
-    }
-
-    const { error } = await supabase.from("transactions").insert(transacoesParaInserir);
-
-    if (!error) {
-      setDescricao(""); setValor(""); setIsRecorrente(false); setMesesRepeticao(12);
-      setDataLancamento(new Date().toISOString().split("T")[0]);
-      carregarDados();
+      for (let i = 0; i < repeticoes; i++) {
+        transacoesParaInserir.push({
+          user_id: user.id, description: isRecorrente ? `${descricao} (${i + 1}/${repeticoes})` : descricao,
+          amount: valorNumerico, type: tipo, category: tipo === 'despesa' ? categoria : 'Renda',
+          date: dataAtual.toISOString().split("T")[0], is_recurring: isRecorrente
+        });
+        dataAtual.setMonth(dataAtual.getMonth() + 1);
+      }
+      const { error } = await supabase.from("transactions").insert(transacoesParaInserir);
+      if (!error) { limparFormulario(); carregarDados(); }
     }
     setSalvando(false);
+  };
+
+  const iniciarEdicao = (t: any) => {
+    setEditandoId(t.id); setDescricao(t.description); setValor(t.amount.toString());
+    setTipo(t.type); setCategoria(t.category || "Outros"); setDataLancamento(t.date);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const limparFormulario = () => {
+    setEditandoId(null); setDescricao(""); setValor(""); setIsRecorrente(false);
+    setMesesRepeticao(12); setDataLancamento(new Date().toISOString().split("T")[0]);
+  };
+
+  const excluirLancamento = async (id: string) => {
+    if (confirm("Tem certeza que deseja excluir este lançamento?")) {
+      const { error } = await supabase.from("transactions").delete().eq("id", id);
+      if (!error) carregarDados();
+    }
   };
 
   const handleLogout = async () => {
@@ -215,7 +249,33 @@ export default function Dashboard() {
 
       <main className="max-w-5xl mx-auto p-6 mt-6">
         
-        {/* ÁREA DOS ALERTAS INTELIGENTES */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+          <h2 className="text-2xl font-bold text-slate-800">Seu Resumo</h2>
+          
+          <div className="flex items-center gap-3">
+            {/* BOTÃO DE EXPORTAR PDF */}
+            <button 
+              onClick={exportarPDF}
+              className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-xl font-medium text-sm hover:bg-slate-900 transition shadow-sm"
+              title="Baixar relatório deste mês"
+            >
+              📄 Exportar PDF
+            </button>
+
+            {/* SELETOR DE MÊS */}
+            <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm transition hover:shadow-md cursor-pointer">
+              <span className="text-xl">📅</span>
+              <label className="text-sm font-semibold text-slate-500 hidden md:block">Filtrar mês:</label>
+              <input
+                type="month"
+                value={mesSelecionado}
+                onChange={(e) => setMesSelecionado(e.target.value)}
+                className="bg-transparent border-none outline-none font-bold text-blue-600 cursor-pointer w-[120px]"
+              />
+            </div>
+          </div>
+        </div>
+
         {alertas.length > 0 && (
           <div className="mb-6 space-y-3">
             {alertas.map((alerta, index) => (
@@ -229,24 +289,32 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-            <p className="text-sm font-medium text-slate-500 mb-1">Saldo Real Atual</p>
+            <p className="text-sm font-medium text-slate-500 mb-1">Saldo Conta (Geral)</p>
             <p className={`text-3xl font-bold ${resumo.saldo >= 0 ? 'text-blue-600' : 'text-red-600'}`}>{formatarMoeda(resumo.saldo)}</p>
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-            <p className="text-sm font-medium text-slate-500 mb-1">Receitas Realizadas</p>
+            <p className="text-sm font-medium text-slate-500 mb-1">Receitas do Mês</p>
             <p className="text-2xl font-bold text-green-600">{formatarMoeda(resumo.receitas)}</p>
           </div>
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-            <p className="text-sm font-medium text-slate-500 mb-1">Despesas Pagas</p>
+            <p className="text-sm font-medium text-slate-500 mb-1">Despesas do Mês</p>
             <p className="text-2xl font-bold text-red-600">{formatarMoeda(resumo.despesas)}</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-1">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 sticky top-24">
-              <h3 className="text-lg font-bold text-slate-800 mb-4">Novo Lançamento</h3>
-              <form onSubmit={adicionarLancamento} className="space-y-4">
+            <div className={`p-6 rounded-2xl shadow-sm border sticky top-24 transition-colors ${editandoId ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-100'}`}>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className={`text-lg font-bold ${editandoId ? 'text-amber-800' : 'text-slate-800'}`}>
+                  {editandoId ? '✏️ Editando Lançamento' : 'Novo Lançamento'}
+                </h3>
+                {editandoId && (
+                  <button onClick={limparFormulario} className="text-xs font-bold text-slate-500 hover:text-slate-800">CANCELAR</button>
+                )}
+              </div>
+
+              <form onSubmit={salvarLancamento} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Descrição</label>
                   <input type="text" required value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex: Salário, Netflix..." className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
@@ -280,22 +348,24 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-slate-100 mt-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={isRecorrente} onChange={(e) => setIsRecorrente(e.target.checked)} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600" />
-                    <span className="text-sm font-medium text-slate-700">Lançamento recorrente/parcelado</span>
-                  </label>
+                {!editandoId && (
+                  <div className="pt-2 border-t border-slate-100 mt-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={isRecorrente} onChange={(e) => setIsRecorrente(e.target.checked)} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600" />
+                      <span className="text-sm font-medium text-slate-700">Lançamento recorrente/parcelado</span>
+                    </label>
 
-                  {isRecorrente && (
-                    <div className="mt-3 bg-blue-50 p-3 rounded-lg border border-blue-100">
-                      <label className="block text-xs font-semibold text-blue-800 mb-1">Por quantos meses?</label>
-                      <input type="number" min="2" max="60" value={mesesRepeticao} onChange={(e) => setMesesRepeticao(Number(e.target.value))} className="w-full px-3 py-1.5 rounded-md border border-blue-200 text-sm outline-none focus:border-blue-400" />
-                    </div>
-                  )}
-                </div>
+                    {isRecorrente && (
+                      <div className="mt-3 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                        <label className="block text-xs font-semibold text-blue-800 mb-1">Por quantos meses?</label>
+                        <input type="number" min="2" max="60" value={mesesRepeticao} onChange={(e) => setMesesRepeticao(Number(e.target.value))} className="w-full px-3 py-1.5 rounded-md border border-blue-200 text-sm outline-none focus:border-blue-400" />
+                      </div>
+                    )}
+                  </div>
+                )}
 
-                <button type="submit" disabled={salvando} className="w-full bg-blue-600 text-white font-semibold py-3 rounded-lg hover:bg-blue-700 transition mt-4 disabled:opacity-50 shadow-sm">
-                  {salvando ? "Salvando..." : "Adicionar Lançamento"}
+                <button type="submit" disabled={salvando} className={`w-full text-white font-semibold py-3 rounded-lg transition mt-4 disabled:opacity-50 shadow-sm ${editandoId ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                  {salvando ? "Salvando..." : (editandoId ? "Atualizar Lançamento" : "Adicionar Lançamento")}
                 </button>
               </form>
             </div>
@@ -304,7 +374,7 @@ export default function Dashboard() {
           <div className="lg:col-span-2 flex flex-col gap-8">
             {dadosGrafico.length > 0 && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                <h3 className="text-lg font-bold text-slate-800 mb-4">Onde seu dinheiro está indo</h3>
+                <h3 className="text-lg font-bold text-slate-800 mb-4">Onde seu dinheiro foi parar</h3>
                 <div className="h-72 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -320,13 +390,13 @@ export default function Dashboard() {
             )}
 
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-              <h3 className="text-lg font-bold text-slate-800 mb-4">Últimos Lançamentos</h3>
+              <h3 className="text-lg font-bold text-slate-800 mb-4">Lançamentos do Mês</h3>
               {transactions.length === 0 ? (
-                <div className="text-center py-10 text-slate-500">Nenhum lançamento encontrado.</div>
+                <div className="text-center py-10 text-slate-500">Nenhum lançamento neste mês.</div>
               ) : (
                 <div className="space-y-3">
-                  {transactions.slice(0, 15).map((t) => (
-                    <div key={t.id} className="flex justify-between items-center p-4 hover:bg-slate-50 rounded-xl border border-slate-100 transition">
+                  {transactions.map((t) => (
+                    <div key={t.id} className="flex justify-between items-center p-4 hover:bg-slate-50 rounded-xl border border-slate-100 transition group">
                       <div className="flex items-center gap-4">
                         <div className={`w-2 h-10 rounded-full ${t.type === 'receita' ? 'bg-green-500' : 'bg-red-500'}`}></div>
                         <div>
@@ -340,9 +410,17 @@ export default function Dashboard() {
                           </p>
                         </div>
                       </div>
-                      <p className={`font-bold ${t.type === 'receita' ? 'text-green-600' : 'text-red-600'}`}>
-                        {t.type === 'receita' ? '+' : '-'}{formatarMoeda(t.amount)}
-                      </p>
+                      
+                      <div className="flex items-center gap-4">
+                        <p className={`font-bold ${t.type === 'receita' ? 'text-green-600' : 'text-red-600'}`}>
+                          {t.type === 'receita' ? '+' : '-'}{formatarMoeda(t.amount)}
+                        </p>
+                        
+                        <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => iniciarEdicao(t)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Editar">✏️</button>
+                          <button onClick={() => excluirLancamento(t.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Excluir">🗑️</button>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
