@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import Link from "next/link";
 
 export default function Metas() {
   const router = useRouter();
@@ -10,12 +11,16 @@ export default function Metas() {
   const [user, setUser] = useState<any>(null);
   const [goals, setGoals] = useState<any[]>([]);
 
-  // Formulário
+  // Formulário de Nova Meta
   const [title, setTitle] = useState("");
   const [targetAmount, setTargetAmount] = useState("");
   const [currentAmount, setCurrentAmount] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [salvando, setSalvando] = useState(false);
+
+  // Estado para o Modal/Campo de Depósito Rápido
+  const [depositandoId, setDepositandoId] = useState<string | null>(null);
+  const [valorDeposito, setValorDeposito] = useState("");
 
   useEffect(() => {
     carregarMetas();
@@ -55,28 +60,47 @@ export default function Metas() {
     setSalvando(false);
   };
 
-  // Funções de Matemática e Lógica
+  // FUNÇÃO PARA DEPOSITAR DINHEIRO NA META
+  const realizarDeposito = async (goalId: string, currentTotal: number) => {
+    if (!valorDeposito) return;
+    
+    const valorAdicional = parseFloat(valorDeposito.replace(",", "."));
+    const novoTotal = currentTotal + valorAdicional;
+
+    const { error } = await supabase
+      .from("goals")
+      .update({ current_amount: novoTotal })
+      .eq("id", goalId);
+
+    if (!error) {
+      setDepositandoId(null);
+      setValorDeposito("");
+      carregarMetas();
+    } else {
+      alert("Erro ao depositar: " + error.message);
+    }
+  };
+
   const formatarMoeda = (valor: number) => 
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
 
   const calcularProgresso = (current: number, target: number) => {
     const percent = (current / target) * 100;
-    return Math.min(percent, 100).toFixed(0); // Limita a 100%
+    return Math.min(percent, 100).toFixed(0);
   };
 
   const calcularMensalidade = (current: number, target: number, dateString: string) => {
     const faltam = target - current;
-    if (faltam <= 0) return 0; // Meta já batida
+    if (faltam <= 0) return 0;
 
     const dataAlvo = new Date(dateString);
     const hoje = new Date();
     
-    // Calcula diferença em meses
     const diffAnos = dataAlvo.getFullYear() - hoje.getFullYear();
     const diffMeses = dataAlvo.getMonth() - hoje.getMonth();
     let mesesFaltantes = (diffAnos * 12) + diffMeses;
 
-    if (mesesFaltantes <= 0) mesesFaltantes = 1; // Para evitar divisão por zero
+    if (mesesFaltantes <= 0) mesesFaltantes = 1;
 
     return faltam / mesesFaltantes;
   };
@@ -85,13 +109,14 @@ export default function Metas() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
-      {/* Menu Superior (Igual ao do Dashboard) */}
+      {/* Menu Superior */}
       <nav className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-8">
           <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
           <div className="hidden md:flex gap-4">
-            <a href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Visão Geral</a>
-            <a href="/metas" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Minhas Metas</a>
+            <Link href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Visão Geral</Link>
+            <Link href="/planejamento" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Planejamento</Link>
+            <Link href="/metas" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Minhas Metas</Link>
           </div>
         </div>
       </nav>
@@ -101,7 +126,7 @@ export default function Metas() {
           
           {/* Formulário de Nova Meta */}
           <div className="lg:col-span-1">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 sticky top-24">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Criar Novo Objetivo</h3>
               <form onSubmit={adicionarMeta} className="space-y-4">
                 <div>
@@ -127,7 +152,7 @@ export default function Metas() {
             </div>
           </div>
 
-          {/* Lista de Metas e Barras de Progresso */}
+          {/* Lista de Metas */}
           <div className="lg:col-span-2 space-y-6">
             {goals.length === 0 ? (
               <div className="bg-white p-10 rounded-2xl shadow-sm border border-slate-100 text-center text-slate-500">
@@ -138,6 +163,7 @@ export default function Metas() {
                 const percent = calcularProgresso(goal.current_amount, goal.target_amount);
                 const mensalidade = calcularMensalidade(goal.current_amount, goal.target_amount, goal.target_date);
                 const isConcluido = goal.current_amount >= goal.target_amount;
+                const estaDepositando = depositandoId === goal.id;
 
                 return (
                   <div key={goal.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
@@ -153,25 +179,59 @@ export default function Metas() {
                     </div>
 
                     {/* Barra de Progresso */}
-                    <div className="w-full bg-slate-100 rounded-full h-4 mb-2 overflow-hidden">
+                    <div className="w-full bg-slate-100 rounded-full h-4 mb-3 overflow-hidden">
                       <div 
                         className={`h-4 rounded-full transition-all duration-1000 ${isConcluido ? 'bg-green-500' : 'bg-blue-600'}`}
                         style={{ width: `${percent}%` }}
                       ></div>
                     </div>
                     
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="font-semibold text-slate-700">{percent}% alcançado</span>
-                      
-                      {!isConcluido && (
-                        <span className="text-blue-600 font-medium bg-blue-50 px-3 py-1 rounded-full">
-                          Guarde ~{formatarMoeda(mensalidade)} / mês
-                        </span>
-                      )}
-                      {isConcluido && (
-                        <span className="text-green-600 font-medium bg-green-50 px-3 py-1 rounded-full flex items-center gap-1">
-                          🎉 Meta atingida!
-                        </span>
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pt-2 border-t border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <span className="font-semibold text-slate-700">{percent}% alcançado</span>
+                        {!isConcluido && (
+                          <span className="text-blue-600 font-medium bg-blue-50 px-3 py-1 rounded-full text-xs">
+                            Guarde ~{formatarMoeda(mensalidade)} / mês
+                          </span>
+                        )}
+                        {isConcluido && (
+                          <span className="text-green-600 font-medium bg-green-50 px-3 py-1 rounded-full text-xs">
+                            🎉 Meta atingida!
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Botão de Depositar */}
+                      {!estaDepositando ? (
+                        <button 
+                          onClick={() => setDepositandoId(goal.id)}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-sm"
+                        >
+                          + Depositar Valor
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+                          <input 
+                            type="number" 
+                            step="0.01"
+                            placeholder="Valor R$" 
+                            value={valorDeposito}
+                            onChange={(e) => setValorDeposito(e.target.value)}
+                            className="w-28 px-3 py-1 text-xs rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-600"
+                          />
+                          <button 
+                            onClick={() => realizarDeposito(goal.id, Number(goal.current_amount))}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                          >
+                            Salvar
+                          </button>
+                          <button 
+                            onClick={() => { setDepositandoId(null); setValorDeposito(""); }}
+                            className="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>

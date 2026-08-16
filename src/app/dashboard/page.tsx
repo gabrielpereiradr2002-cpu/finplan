@@ -3,31 +3,32 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
+import Link from "next/link"; // Adicionamos o Link para o menu superior funcionar certinho
 
 export default function Dashboard() {
   const router = useRouter();
   
-  // Estados do sistema
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<any>(null);
   
-  // Estados financeiros
   const [transactions, setTransactions] = useState<any[]>([]);
   const [resumo, setResumo] = useState({ receitas: 0, despesas: 0, saldo: 0 });
 
-  // Estados do formulário
   const [descricao, setDescricao] = useState("");
   const [valor, setValor] = useState("");
   const [tipo, setTipo] = useState("receita");
+  
+  // NOVOS ESTADOS PARA AS CATEGORIAS
+  const [categoria, setCategoria] = useState("Outros");
+  const categoriasPadrao = ["Moradia", "Alimentação", "Transporte", "Lazer", "Saúde", "Dívidas", "Investimentos", "Outros"];
+  
   const [salvando, setSalvando] = useState(false);
 
-  // Carrega os dados assim que a tela abre
   useEffect(() => {
     carregarDados();
   }, []);
 
   const carregarDados = async () => {
-    // 1. Verifica quem está logado
     const { data: { user } } = await supabase.auth.getUser();
     
     if (!user) {
@@ -36,7 +37,6 @@ export default function Dashboard() {
     }
     setUser(user);
 
-    // 2. Busca as transações deste usuário
     const { data: transacoesBanco, error } = await supabase
       .from("transactions")
       .select("*")
@@ -73,19 +73,19 @@ export default function Dashboard() {
 
     const valorNumerico = parseFloat(valor.replace(",", "."));
 
-    // Salva no Supabase
+    // O INSERIR NO BANCO AGORA ENVIA A CATEGORIA TAMBÉM
     const { error } = await supabase.from("transactions").insert([
       {
         user_id: user.id,
         description: descricao,
         amount: valorNumerico,
         type: tipo,
-        date: new Date().toISOString().split("T")[0], // Data de hoje
+        category: tipo === 'despesa' ? categoria : 'Renda',
+        date: new Date().toISOString().split("T")[0],
       }
     ]);
 
     if (!error) {
-      // Limpa o formulário e recarrega os dados
       setDescricao("");
       setValor("");
       carregarDados();
@@ -101,7 +101,6 @@ export default function Dashboard() {
     router.push("/");
   };
 
-  // Formatador de Moeda (R$)
   const formatarMoeda = (valor: number) => {
     return new Intl.NumberFormat("pt-BR", {
       style: "currency",
@@ -115,14 +114,14 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
-      {/* Menu Superior */}
-      {/* Menu Superior */}
+      {/* MENU SUPERIOR ATUALIZADO */}
       <nav className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
         <div className="flex items-center gap-8">
           <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
           <div className="hidden md:flex gap-4">
-            <a href="/dashboard" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Visão Geral</a>
-            <a href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Minhas Metas</a>
+            <Link href="/dashboard" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Visão Geral</Link>
+            <Link href="/planejamento" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Planejamento</Link>
+            <Link href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Minhas Metas</Link>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -134,7 +133,6 @@ export default function Dashboard() {
       </nav>
 
       <main className="max-w-5xl mx-auto p-6 mt-6">
-        {/* Cards de Resumo */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
             <p className="text-sm font-medium text-slate-500 mb-1">Saldo Atual</p>
@@ -153,7 +151,6 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Formulário de Novo Lançamento */}
           <div className="lg:col-span-1">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Novo Lançamento</h3>
@@ -207,6 +204,20 @@ export default function Dashboard() {
                   </div>
                 </div>
 
+                {/* NOVO CAMPO DE CATEGORIA (SÓ APARECE SE FOR DESPESA) */}
+                {tipo === "despesa" && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1 mt-3">Categoria</label>
+                    <select 
+                      value={categoria} 
+                      onChange={(e) => setCategoria(e.target.value)}
+                      className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                    >
+                      {categoriasPadrao.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    </select>
+                  </div>
+                )}
+
                 <button
                   type="submit"
                   disabled={salvando}
@@ -218,7 +229,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Histórico de Transações */}
           <div className="lg:col-span-2">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Últimos Lançamentos</h3>
@@ -235,7 +245,10 @@ export default function Dashboard() {
                         <div className={`w-2 h-10 rounded-full ${t.type === 'receita' ? 'bg-green-500' : 'bg-red-500'}`}></div>
                         <div>
                           <p className="font-semibold text-slate-800">{t.description}</p>
-                          <p className="text-xs text-slate-500">{new Date(t.date).toLocaleDateString('pt-BR')}</p>
+                          <p className="text-xs text-slate-500">
+                            {new Date(t.date).toLocaleDateString('pt-BR')} 
+                            {t.category && ` • ${t.category}`} {/* Mostra a categoria do lado da data */}
+                          </p>
                         </div>
                       </div>
                       <p className={`font-bold ${t.type === 'receita' ? 'text-green-600' : 'text-red-600'}`}>
