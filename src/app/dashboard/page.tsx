@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Link from "next/link";
+// IMPORTANDO OS COMPONENTES DO GRÁFICO
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 export default function Dashboard() {
   const router = useRouter();
@@ -13,6 +15,9 @@ export default function Dashboard() {
   
   const [transactions, setTransactions] = useState<any[]>([]);
   const [resumo, setResumo] = useState({ receitas: 0, despesas: 0, saldo: 0 });
+  
+  // ESTADO PARA GUARDAR OS DADOS DO GRÁFICO
+  const [dadosGrafico, setDadosGrafico] = useState<any[]>([]);
 
   const [descricao, setDescricao] = useState("");
   const [valor, setValor] = useState("");
@@ -21,11 +26,13 @@ export default function Dashboard() {
   const [categoria, setCategoria] = useState("Outros");
   const categoriasPadrao = ["Moradia", "Alimentação", "Transporte", "Lazer", "Saúde", "Dívidas", "Investimentos", "Outros"];
   
-  // NOVOS ESTADOS PARA RECORRÊNCIA
   const [isRecorrente, setIsRecorrente] = useState(false);
-  const [mesesRepeticao, setMesesRepeticao] = useState(12); // Padrão: repete por 1 ano
+  const [mesesRepeticao, setMesesRepeticao] = useState(12);
 
   const [salvando, setSalvando] = useState(false);
+
+  // PALETA DE CORES PARA O GRÁFICO
+  const CORES = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
   useEffect(() => {
     carregarDados();
@@ -47,7 +54,9 @@ export default function Dashboard() {
       
       const hoje = new Date().toISOString().split("T")[0];
       const transacoesRealizadas = transacoesBanco.filter(t => t.date <= hoje);
+      
       calcularResumo(transacoesRealizadas);
+      montarDadosGrafico(transacoesRealizadas); // Prepara o gráfico
     }
     
     setLoading(false);
@@ -62,7 +71,25 @@ export default function Dashboard() {
     setResumo({ receitas: rec, despesas: desp, saldo: rec - desp });
   };
 
-  // A MÁGICA DA RECORRÊNCIA ACONTECE AQUI
+  // FUNÇÃO QUE AGRUPA AS DESPESAS POR CATEGORIA PARA O GRÁFICO
+  const montarDadosGrafico = (transacoes: any[]) => {
+    const gastosPorCategoria: Record<string, number> = {};
+    
+    transacoes.forEach(t => {
+      if (t.type === 'despesa') {
+        gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
+      }
+    });
+
+    // Transforma o objeto em uma lista (array) para o Recharts ler
+    const dadosFormatados = Object.keys(gastosPorCategoria).map(key => ({
+      name: key,
+      value: gastosPorCategoria[key]
+    })).sort((a, b) => b.value - a.value); // Ordena da maior despesa para a menor
+
+    setDadosGrafico(dadosFormatados);
+  };
+
   const adicionarLancamento = async (e: React.FormEvent) => {
     e.preventDefault();
     setSalvando(true);
@@ -70,30 +97,22 @@ export default function Dashboard() {
     const valorNumerico = parseFloat(valor.replace(",", "."));
     const transacoesParaInserir = [];
     
-    // Pega a data base escolhida pelo usuário
-    let dataAtual = new Date(dataLancamento + "T12:00:00"); // Força o fuso horário para evitar bugs de dia anterior
-
-    // Define quantas vezes o laço vai rodar (1 vez se for normal, ou X vezes se for recorrente)
+    let dataAtual = new Date(dataLancamento + "T12:00:00");
     const repeticoes = isRecorrente ? mesesRepeticao : 1;
 
     for (let i = 0; i < repeticoes; i++) {
       transacoesParaInserir.push({
         user_id: user.id,
-        // Se for recorrente, adiciona a tag (1/12) na frente do nome
         description: isRecorrente ? `${descricao} (${i + 1}/${repeticoes})` : descricao,
         amount: valorNumerico,
         type: tipo,
         category: tipo === 'despesa' ? categoria : 'Renda',
-        // Converte a data de volta para o formato YYYY-MM-DD
         date: dataAtual.toISOString().split("T")[0],
         is_recurring: isRecorrente
       });
-
-      // Pula para o próximo mês para a próxima repetição do laço
       dataAtual.setMonth(dataAtual.getMonth() + 1);
     }
 
-    // O Supabase consegue salvar dezenas de transações de uma só vez (Bulk Insert)
     const { error } = await supabase.from("transactions").insert(transacoesParaInserir);
 
     if (!error) {
@@ -103,8 +122,6 @@ export default function Dashboard() {
       setMesesRepeticao(12);
       setDataLancamento(new Date().toISOString().split("T")[0]);
       carregarDados();
-    } else {
-      alert("Erro ao salvar: " + error.message);
     }
     
     setSalvando(false);
@@ -121,7 +138,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
-      {/* Menu Superior Responsivo */}
       <nav className="bg-white border-b border-slate-200 px-4 py-3 md:px-6 md:py-4 flex flex-col md:flex-row justify-between sticky top-0 z-10 gap-3 md:gap-0">
         <div className="flex items-center justify-between w-full md:w-auto">
           <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
@@ -158,7 +174,6 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* FORMULÁRIO */}
           <div className="lg:col-span-1">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 sticky top-24">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Novo Lançamento</h3>
@@ -196,29 +211,16 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* CHECKBOX DE RECORRÊNCIA */}
                 <div className="pt-2 border-t border-slate-100 mt-4">
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={isRecorrente}
-                      onChange={(e) => setIsRecorrente(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600"
-                    />
+                    <input type="checkbox" checked={isRecorrente} onChange={(e) => setIsRecorrente(e.target.checked)} className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-600" />
                     <span className="text-sm font-medium text-slate-700">Lançamento recorrente/parcelado</span>
                   </label>
 
                   {isRecorrente && (
                     <div className="mt-3 bg-blue-50 p-3 rounded-lg border border-blue-100">
                       <label className="block text-xs font-semibold text-blue-800 mb-1">Por quantos meses?</label>
-                      <input 
-                        type="number" 
-                        min="2" max="60"
-                        value={mesesRepeticao} 
-                        onChange={(e) => setMesesRepeticao(Number(e.target.value))} 
-                        className="w-full px-3 py-1.5 rounded-md border border-blue-200 text-sm outline-none focus:border-blue-400" 
-                      />
-                      <p className="text-xs text-blue-600 mt-2">Isto preencherá o seu Fluxo de Caixa para os próximos {mesesRepeticao} meses automaticamente.</p>
+                      <input type="number" min="2" max="60" value={mesesRepeticao} onChange={(e) => setMesesRepeticao(Number(e.target.value))} className="w-full px-3 py-1.5 rounded-md border border-blue-200 text-sm outline-none focus:border-blue-400" />
                     </div>
                   )}
                 </div>
@@ -230,15 +232,42 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* LISTA DE LANÇAMENTOS */}
-          <div className="lg:col-span-2">
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 h-full">
+          <div className="lg:col-span-2 flex flex-col gap-8">
+            
+            {/* O NOVO GRÁFICO DE CATEGORIAS */}
+            {dadosGrafico.length > 0 && (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <h3 className="text-lg font-bold text-slate-800 mb-4">Onde seu dinheiro está indo</h3>
+                <div className="h-72 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={dadosGrafico}
+                        innerRadius={80}
+                        outerRadius={110}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        {dadosGrafico.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={CORES[index % CORES.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value: number) => formatarMoeda(value)} />
+                      <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* LISTA DE LANÇAMENTOS */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Últimos Lançamentos</h3>
               {transactions.length === 0 ? (
                 <div className="text-center py-10 text-slate-500">Nenhum lançamento encontrado.</div>
               ) : (
                 <div className="space-y-3">
-                  {transactions.slice(0, 15).map((t) => ( // Mostra apenas os 15 mais recentes aqui
+                  {transactions.slice(0, 15).map((t) => (
                     <div key={t.id} className="flex justify-between items-center p-4 hover:bg-slate-50 rounded-xl border border-slate-100 transition">
                       <div className="flex items-center gap-4">
                         <div className={`w-2 h-10 rounded-full ${t.type === 'receita' ? 'bg-green-500' : 'bg-red-500'}`}></div>
@@ -261,6 +290,7 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+
           </div>
         </div>
       </main>
