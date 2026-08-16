@@ -85,15 +85,22 @@ export default function Planejamento() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
-      {/* Menu Superior */}
-      <nav className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-10">
-        <div className="flex items-center gap-8">
+      {/* Menu Superior Responsivo */}
+      <nav className="bg-white border-b border-slate-200 px-4 py-3 md:px-6 md:py-4 flex flex-col md:flex-row justify-between sticky top-0 z-10 gap-3 md:gap-0">
+        <div className="flex items-center justify-between w-full md:w-auto">
           <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
-          <div className="hidden md:flex gap-4">
-            <Link href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Visão Geral</Link>
-            <Link href="/planejamento" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Planejamento</Link>
-            <Link href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Minhas Metas</Link>
-          </div>
+          <button onClick={() => supabase.auth.signOut().then(() => router.push("/"))} className="md:hidden text-sm font-medium text-red-600">Sair</button>
+        </div>
+        
+        <div className="flex w-full md:w-auto gap-4 overflow-x-auto whitespace-nowrap pb-1 md:pb-0">
+          <Link href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Visão Geral</Link>
+          <Link href="/planejamento" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Planejamento</Link>
+          <Link href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Minhas Metas</Link>
+        </div>
+
+        <div className="hidden md:flex items-center gap-4">
+          <span className="text-sm text-slate-600">{user?.email}</span>
+          <button onClick={() => supabase.auth.signOut().then(() => router.push("/"))} className="text-sm font-medium text-red-600 hover:bg-red-50 px-3 py-1 rounded-md transition">Sair</button>
         </div>
       </nav>
 
