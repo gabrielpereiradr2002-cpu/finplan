@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import Link from "next/link";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
-
-// IMPORTAÇÕES DO GERADOR DE PDF
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
@@ -49,7 +47,10 @@ export default function Dashboard() {
     const hoje = new Date().toISOString().split("T")[0];
 
     const { data: transacoesBanco } = await supabase.from("transactions").select("*").eq("user_id", user.id).order("date", { ascending: false });
-    const { data: orcamentos } = await supabase.from("budgets").select("*").eq("user_id", user.id).eq("month", mesSelecionado);
+    
+    // CORREÇÃO: Removido o filtro de mês daqui. Agora ele pega os limites globais que você definiu.
+    const { data: orcamentos } = await supabase.from("budgets").select("*").eq("user_id", user.id);
+    
     const { data: metas } = await supabase.from("goals").select("*").eq("user_id", user.id);
 
     if (transacoesBanco) {
@@ -106,65 +107,23 @@ export default function Dashboard() {
     setDadosGrafico(dadosFormatados);
   };
 
-  // ---------------------------------------------
-  // NOVO: FUNÇÃO PARA GERAR E BAIXAR O RELATÓRIO PDF
-  // ---------------------------------------------
   const exportarPDF = () => {
     const doc = new jsPDF();
-    
-    // Título do Documento
-    doc.setFontSize(20);
-    doc.setTextColor(37, 99, 235); // Azul da marca
-    doc.text(`Relatório Financeiro - FinPlan`, 14, 22);
-    
-    // Subtítulo e Datas
-    doc.setFontSize(11);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`Referência: Mês ${mesSelecionado.split("-")[1]}/${mesSelecionado.split("-")[0]}`, 14, 30);
+    doc.setFontSize(20); doc.setTextColor(37, 99, 235); doc.text(`Relatório Financeiro - FinPlan`, 14, 22);
+    doc.setFontSize(11); doc.setTextColor(100, 116, 139); doc.text(`Referência: Mês ${mesSelecionado.split("-")[1]}/${mesSelecionado.split("-")[0]}`, 14, 30);
     doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR')}`, 14, 36);
-    
-    // Resumo Financeiro
-    doc.setFontSize(12);
-    doc.setTextColor(0, 0, 0);
-    doc.text(`Resumo do Mês:`, 14, 48);
-    
-    doc.setFontSize(11);
-    doc.setTextColor(22, 163, 74); // Verde
-    doc.text(`(+) Receitas: ${formatarMoeda(resumo.receitas)}`, 14, 56);
-    
-    doc.setTextColor(220, 38, 38); // Vermelho
-    doc.text(`(-) Despesas: ${formatarMoeda(resumo.despesas)}`, 14, 64);
-    
-    doc.setTextColor(30, 41, 59); // Escuro
-    doc.text(`(=) Saldo Global Atual: ${formatarMoeda(resumo.saldo)}`, 14, 72);
+    doc.setFontSize(12); doc.setTextColor(0, 0, 0); doc.text(`Resumo do Mês:`, 14, 48);
+    doc.setFontSize(11); doc.setTextColor(22, 163, 74); doc.text(`(+) Receitas: ${formatarMoeda(resumo.receitas)}`, 14, 56);
+    doc.setTextColor(220, 38, 38); doc.text(`(-) Despesas: ${formatarMoeda(resumo.despesas)}`, 14, 64);
+    doc.setTextColor(30, 41, 59); doc.text(`(=) Saldo Global Atual: ${formatarMoeda(resumo.saldo)}`, 14, 72);
 
-    // Estruturando a Tabela de Lançamentos
     const tableColumn = ["Data", "Descrição", "Categoria", "Tipo", "Valor"];
     const tableRows: any[] = [];
-
     transactions.forEach(t => {
-      const transacaoData = [
-        new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR'),
-        t.description,
-        t.category || "-",
-        t.type === 'receita' ? 'Receita' : 'Despesa',
-        formatarMoeda(t.amount)
-      ];
-      tableRows.push(transacaoData);
+      tableRows.push([new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR'), t.description, t.category || "-", t.type === 'receita' ? 'Receita' : 'Despesa', formatarMoeda(t.amount)]);
     });
 
-    // Desenhando a Tabela
-    autoTable(doc, {
-      head: [tableColumn],
-      body: tableRows,
-      startY: 82,
-      theme: 'grid',
-      styles: { fontSize: 10, cellPadding: 3 },
-      headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255] },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
-    });
-
-    // Baixando o arquivo
+    autoTable(doc, { head: [tableColumn], body: tableRows, startY: 82, theme: 'grid', styles: { fontSize: 10, cellPadding: 3 }, headStyles: { fillColor: [37, 99, 235], textColor: [255, 255, 255] }, alternateRowStyles: { fillColor: [248, 250, 252] } });
     doc.save(`FinPlan_Relatorio_${mesSelecionado}.pdf`);
   };
 
@@ -227,6 +186,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
+      {/* Menu Superior */}
       <nav className="bg-white border-b border-slate-200 px-4 py-3 md:px-6 md:py-4 flex flex-col md:flex-row justify-between sticky top-0 z-10 gap-3 md:gap-0">
         <div className="flex items-center justify-between w-full md:w-auto">
           <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
@@ -239,10 +199,15 @@ export default function Dashboard() {
           <Link href="/planejamento" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Planejamento</Link>
           <Link href="/simulador" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Simulador</Link>
           <Link href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Metas</Link>
+          {/* O LINK DE PERFIL SÓ APARECE AQUI SE ESTIVER NO CELULAR */}
+          <Link href="/perfil" className="md:hidden text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Meu Perfil</Link>
         </div>
 
+        {/* LADO DIREITO: NOME CLICÁVEL (COMPUTADOR) */}
         <div className="hidden md:flex items-center gap-4">
-          <span className="text-sm text-slate-600">{user?.email}</span>
+          <Link href="/perfil" className="text-sm font-medium text-slate-700 bg-slate-100 px-3 py-1.5 rounded-full hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-transparent transition flex items-center gap-2 shadow-sm">
+            👤 {user?.user_metadata?.full_name || user?.email}
+          </Link>
           <button onClick={handleLogout} className="text-sm font-medium text-red-600 hover:bg-red-50 px-3 py-1 rounded-md transition">Sair</button>
         </div>
       </nav>
@@ -253,25 +218,11 @@ export default function Dashboard() {
           <h2 className="text-2xl font-bold text-slate-800">Seu Resumo</h2>
           
           <div className="flex items-center gap-3">
-            {/* BOTÃO DE EXPORTAR PDF */}
-            <button 
-              onClick={exportarPDF}
-              className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-xl font-medium text-sm hover:bg-slate-900 transition shadow-sm"
-              title="Baixar relatório deste mês"
-            >
-              📄 Exportar PDF
-            </button>
-
-            {/* SELETOR DE MÊS */}
+            <button onClick={exportarPDF} className="flex items-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-xl font-medium text-sm hover:bg-slate-900 transition shadow-sm" title="Baixar relatório deste mês">📄 Exportar PDF</button>
             <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm transition hover:shadow-md cursor-pointer">
               <span className="text-xl">📅</span>
               <label className="text-sm font-semibold text-slate-500 hidden md:block">Filtrar mês:</label>
-              <input
-                type="month"
-                value={mesSelecionado}
-                onChange={(e) => setMesSelecionado(e.target.value)}
-                className="bg-transparent border-none outline-none font-bold text-blue-600 cursor-pointer w-[120px]"
-              />
+              <input type="month" value={mesSelecionado} onChange={(e) => setMesSelecionado(e.target.value)} className="bg-transparent border-none outline-none font-bold text-blue-600 cursor-pointer w-30" />
             </div>
           </div>
         </div>
@@ -306,12 +257,8 @@ export default function Dashboard() {
           <div className="lg:col-span-1">
             <div className={`p-6 rounded-2xl shadow-sm border sticky top-24 transition-colors ${editandoId ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-100'}`}>
               <div className="flex justify-between items-center mb-4">
-                <h3 className={`text-lg font-bold ${editandoId ? 'text-amber-800' : 'text-slate-800'}`}>
-                  {editandoId ? '✏️ Editando Lançamento' : 'Novo Lançamento'}
-                </h3>
-                {editandoId && (
-                  <button onClick={limparFormulario} className="text-xs font-bold text-slate-500 hover:text-slate-800">CANCELAR</button>
-                )}
+                <h3 className={`text-lg font-bold ${editandoId ? 'text-amber-800' : 'text-slate-800'}`}>{editandoId ? '✏️ Editando Lançamento' : 'Novo Lançamento'}</h3>
+                {editandoId && <button onClick={limparFormulario} className="text-xs font-bold text-slate-500 hover:text-slate-800">CANCELAR</button>}
               </div>
 
               <form onSubmit={salvarLancamento} className="space-y-4">
@@ -404,10 +351,7 @@ export default function Dashboard() {
                             <p className="font-semibold text-slate-800">{t.description}</p>
                             {t.is_recurring && <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Recorrente</span>}
                           </div>
-                          <p className="text-xs font-medium text-slate-500">
-                            {new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR')} 
-                            {t.category && ` • ${t.category}`}
-                          </p>
+                          <p className="text-xs font-medium text-slate-500">{new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR')} {t.category && ` • ${t.category}`}</p>
                         </div>
                       </div>
                       
@@ -415,7 +359,6 @@ export default function Dashboard() {
                         <p className={`font-bold ${t.type === 'receita' ? 'text-green-600' : 'text-red-600'}`}>
                           {t.type === 'receita' ? '+' : '-'}{formatarMoeda(t.amount)}
                         </p>
-                        
                         <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                           <button onClick={() => iniciarEdicao(t)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Editar">✏️</button>
                           <button onClick={() => excluirLancamento(t.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Excluir">🗑️</button>

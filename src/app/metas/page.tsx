@@ -107,13 +107,17 @@ export default function Metas() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Carregando...</div>;
 
+  function handleLogout(e: React.MouseEvent<HTMLButtonElement>): void {
+    throw new Error("Function not implemented.");
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
       {/* Menu Superior */}
       <nav className="bg-white border-b border-slate-200 px-4 py-3 md:px-6 md:py-4 flex flex-col md:flex-row justify-between sticky top-0 z-10 gap-3 md:gap-0">
         <div className="flex items-center justify-between w-full md:w-auto">
           <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
-          <button onClick={() => { supabase.auth.signOut(); router.push("/"); }} className="md:hidden text-sm font-medium text-red-600">Sair</button>
+          <button onClick={handleLogout} className="md:hidden text-sm font-medium text-red-600">Sair</button>
         </div>
         
         <div className="flex w-full md:w-auto gap-4 overflow-x-auto whitespace-nowrap pb-1 md:pb-0">
@@ -122,11 +126,16 @@ export default function Metas() {
           <Link href="/planejamento" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Planejamento</Link>
           <Link href="/simulador" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Simulador</Link>
           <Link href="/metas" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Metas</Link>
+          {/* O LINK DE PERFIL SÓ APARECE AQUI SE ESTIVER NO CELULAR */}
+          <Link href="/perfil" className="md:hidden text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Meu Perfil</Link>
         </div>
 
+        {/* LADO DIREITO: NOME CLICÁVEL (COMPUTADOR) */}
         <div className="hidden md:flex items-center gap-4">
-          <span className="text-sm text-slate-600">{user?.email}</span>
-          <button onClick={() => { supabase.auth.signOut(); router.push("/"); }} className="text-sm font-medium text-red-600 hover:bg-red-50 px-3 py-1 rounded-md transition">Sair</button>
+          <Link href="/perfil" className="text-sm font-medium text-slate-700 bg-slate-100 px-3 py-1.5 rounded-full hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-transparent transition flex items-center gap-2 shadow-sm">
+            👤 {user?.user_metadata?.full_name || user?.email}
+          </Link>
+          <button onClick={handleLogout} className="text-sm font-medium text-red-600 hover:bg-red-50 px-3 py-1 rounded-md transition">Sair</button>
         </div>
       </nav>
 
