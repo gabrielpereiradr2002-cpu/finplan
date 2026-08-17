@@ -66,7 +66,7 @@ export default function FluxoCaixa() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Calculando projeções...</div>;
 
-  function handleLogout(event: MouseEvent<HTMLButtonElement, MouseEvent>): void {
+  function handleLogout(e: React.MouseEvent<HTMLButtonElement>): void {
     throw new Error("Function not implemented.");
   }
 
