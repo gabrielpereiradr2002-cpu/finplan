@@ -153,7 +153,7 @@ export default function Planejamento() {
               
               <form onSubmit={salvarOrcamento} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1 flex justify-between">
+                  <label className="block text-sm font-medium text-slate-700 mb-1 justify-between">
                     Categoria
                     <Link href="/categorias" className="text-xs font-semibold text-blue-600 hover:underline">Nova Categoria</Link>
                   </label>
