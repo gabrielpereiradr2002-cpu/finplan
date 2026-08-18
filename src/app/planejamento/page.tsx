@@ -121,7 +121,7 @@ export default function Planejamento() {
           <button onClick={handleLogout} className="md:hidden text-sm font-medium text-red-600">Sair</button>
         </div>
         
-        <div className="flex w-full md:w-auto gap-4 overflow-x-auto whitespace-nowrap pb-1 md:pb-0">
+        <div className="flex w-full md:w-auto gap-4 overflow-x-auto whitespace-nowrap pb-1 md:pb-0 hide-scrollbar">
           <Link href="/dashboard" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Visão Geral</Link>
           <Link href="/fluxo" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Fluxo de Caixa</Link>
           <Link href="/planejamento" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Planejamento</Link>
