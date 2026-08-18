@@ -13,12 +13,13 @@ export default function Planejamento() {
 
   const [orcamentos, setOrcamentos] = useState<any[]>([]);
   const [gastosPorCategoria, setGastosPorCategoria] = useState<Record<string, number>>({});
+  
+  // NOVO: Estado para as categorias do usuário
+  const [categoriasUsuario, setCategoriasUsuario] = useState<any[]>([]);
 
-  const [categoria, setCategoria] = useState("Alimentação");
+  const [categoria, setCategoria] = useState("");
   const [valor, setValor] = useState("");
   const [salvando, setSalvando] = useState(false);
-
-  const categoriasPadrao = ["Moradia", "Alimentação", "Transporte", "Lazer", "Saúde", "Dívidas", "Investimentos", "Outros"];
 
   useEffect(() => {
     carregarDados();
@@ -29,34 +30,32 @@ export default function Planejamento() {
     if (!user) return router.push("/login");
     setUser(user);
 
-    // Mês atual exato para filtro
     const mesAtual = new Date().toISOString().slice(0, 7); // Ex: "2026-08"
 
-    // 1. Busca os orçamentos globais do usuário
-    const { data: budgetsBanco } = await supabase
-      .from("budgets")
-      .select("*")
-      .eq("user_id", user.id);
+    // 1. Busca os orçamentos globais
+    const { data: budgetsBanco } = await supabase.from("budgets").select("*").eq("user_id", user.id);
 
-    // 2. Busca TODAS as despesas
-    const { data: transacoes } = await supabase
-      .from("transactions")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("type", "despesa");
+    // 2. Busca as despesas
+    const { data: transacoes } = await supabase.from("transactions").select("*").eq("user_id", user.id).eq("type", "despesa");
+
+    // 3. Busca as categorias do usuário e filtra apenas as de DESPESA
+    const { data: categoriasBanco } = await supabase.from("categories").select("*").eq("user_id", user.id).eq("type", "despesa").order("name", { ascending: true });
+
+    if (categoriasBanco) {
+      setCategoriasUsuario(categoriasBanco);
+      // Já deixa a primeira categoria selecionada por padrão, se existir
+      if (categoriasBanco.length > 0) setCategoria(categoriasBanco[0].name);
+    }
 
     if (budgetsBanco) setOrcamentos(budgetsBanco);
 
     if (transacoes) {
       const gastos: Record<string, number> = {};
-      
       transacoes.forEach(t => {
-        // A mágica acontece aqui: filtramos apenas as transações que pertencem ao mês atual
         if (t.date.startsWith(mesAtual)) {
           gastos[t.category] = (gastos[t.category] || 0) + Number(t.amount);
         }
       });
-      
       setGastosPorCategoria(gastos);
     }
 
@@ -65,31 +64,31 @@ export default function Planejamento() {
 
   const salvarOrcamento = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!categoria) return alert("Você precisa criar uma Categoria de Despesa primeiro!");
+    
     setSalvando(true);
 
     const valorNumerico = parseFloat(valor.toString().replace(",", "."));
     const orcamentoExistente = orcamentos.find(o => o.category === categoria);
-    const mesAtual = new Date().toISOString().slice(0, 7); // Adicionando o mês atual (YYYY-MM)
+    const mesAtual = new Date().toISOString().slice(0, 7);
 
     let erroBanco = null;
 
     if (orcamentoExistente) {
-      // Se já existir na categoria, apenas atualiza o valor
       const { error } = await supabase.from("budgets").update({ amount: valorNumerico }).eq("id", orcamentoExistente.id);
       erroBanco = error;
     } else {
-      // Se não, insere incluindo a coluna 'month' que o banco exige
       const { error } = await supabase.from("budgets").insert([{
         user_id: user.id,
         category: categoria,
         amount: valorNumerico,
-        month: mesAtual // AQUI ESTAVA O PROBLEMA!
+        month: mesAtual
       }]);
       erroBanco = error;
     }
 
     if (erroBanco) {
-      alert("ERRO DO SUPABASE: " + erroBanco.message);
+      alert("ERRO: " + erroBanco.message);
     } else {
       setValor("");
       carregarDados();
@@ -128,6 +127,7 @@ export default function Planejamento() {
           <Link href="/planejamento" className="text-sm font-semibold text-blue-600 border-b-2 border-blue-600 pb-1">Planejamento</Link>
           <Link href="/simulador" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Simulador</Link>
           <Link href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Metas</Link>
+          <Link href="/categorias" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Categorias</Link>
           <Link href="/perfil" className="md:hidden text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Meu Perfil</Link>
         </div>
 
@@ -142,7 +142,7 @@ export default function Planejamento() {
       <main className="max-w-4xl mx-auto p-6 mt-6">
         <div className="text-center mb-10">
           <h2 className="text-3xl font-bold text-slate-800">Seu Orçamento Mensal</h2>
-          <p className="text-slate-500 mt-2">Defina limites de gastos e nós avisaremos antes de você estourar.</p>
+          <p className="text-slate-500 mt-2">Defina limites de gastos baseados nas suas categorias e nós avisaremos antes de você estourar.</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -150,20 +150,35 @@ export default function Planejamento() {
           <div className="md:col-span-1">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 sticky top-24">
               <h3 className="text-lg font-bold text-slate-800 mb-4">Definir Limite</h3>
+              
               <form onSubmit={salvarOrcamento} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Categoria</label>
-                  <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none bg-white">
-                    {categoriasPadrao.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
+                  <label className="block text-sm font-medium text-slate-700 mb-1 flex justify-between">
+                    Categoria
+                    <Link href="/categorias" className="text-xs font-semibold text-blue-600 hover:underline">Nova Categoria</Link>
+                  </label>
+                  <select 
+                    value={categoria} 
+                    onChange={(e) => setCategoria(e.target.value)} 
+                    required 
+                    className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none bg-white"
+                  >
+                    {categoriasUsuario.length === 0 ? (
+                      <option value="" disabled>Crie uma categoria antes</option>
+                    ) : (
+                      categoriasUsuario.map(cat => (
+                        <option key={cat.id} value={cat.name}>{cat.name}</option>
+                      ))
+                    )}
                   </select>
                 </div>
+
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Limite Máximo (R$)</label>
                   <input type="number" step="0.01" required value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0.00" className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none" />
                 </div>
-                <button type="submit" disabled={salvando} className="w-full bg-slate-800 text-white font-semibold py-3 rounded-lg hover:bg-slate-900 transition mt-2 shadow-sm">
+
+                <button type="submit" disabled={salvando} className="w-full bg-slate-800 text-white font-semibold py-3 rounded-lg hover:bg-slate-900 transition mt-2 shadow-sm disabled:opacity-50">
                   {salvando ? "Salvando..." : "Salvar Limite"}
                 </button>
               </form>
@@ -175,25 +190,26 @@ export default function Planejamento() {
               <div className="bg-white p-10 rounded-2xl shadow-sm border border-slate-100 text-center">
                 <span className="text-4xl mb-4 block">🎯</span>
                 <p className="text-slate-500 font-medium">Nenhum limite definido ainda.</p>
-                <p className="text-sm text-slate-400 mt-1">Comece limitando seus maiores gastos, como Lazer ou Alimentação.</p>
+                <p className="text-sm text-slate-400 mt-1">Comece limitando seus maiores gastos para manter o controle.</p>
               </div>
             ) : (
               orcamentos.map((orc) => {
                 const limite = Number(orc.amount);
-                // Busca o gasto total do mês atual para a categoria deste orçamento
                 const gasto = gastosPorCategoria[orc.category] || 0;
-                
-                // Calcula o percentual e impede que a barra passe de 100 visualmente
                 const percentual = Math.min((gasto / limite) * 100, 100);
                 
                 let corBarra = "bg-green-500";
                 if (percentual >= 80) corBarra = "bg-yellow-500";
                 if (percentual >= 100) corBarra = "bg-red-500";
 
+                // Puxa a cor original da categoria para deixar bonitinho na lista
+                const corDaCategoria = categoriasUsuario.find(c => c.name === orc.category)?.color || '#94a3b8';
+
                 return (
                   <div key={orc.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 transition hover:shadow-md">
                     <div className="flex justify-between items-center mb-3">
                       <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: corDaCategoria }}></div>
                         <h4 className="font-bold text-slate-800 text-lg">{orc.category}</h4>
                       </div>
                       <button onClick={() => excluirOrcamento(orc.id)} className="text-slate-400 hover:text-red-500 transition" title="Excluir Limite">
@@ -206,7 +222,6 @@ export default function Planejamento() {
                       <span className="font-medium text-slate-500">Limite: <span className="text-slate-800">{formatarMoeda(limite)}</span></span>
                     </div>
 
-                    {/* BARRA DE PROGRESSO */}
                     <div className="w-full bg-slate-100 rounded-full h-3 mb-1 overflow-hidden">
                       <div className={`h-3 rounded-full transition-all duration-500 ease-out ${corBarra}`} style={{ width: `${percentual}%` }}></div>
                     </div>

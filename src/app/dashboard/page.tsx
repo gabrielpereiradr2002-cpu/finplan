@@ -19,21 +19,21 @@ export default function Dashboard() {
   const [dadosGrafico, setDadosGrafico] = useState<any[]>([]);
   const [alertas, setAlertas] = useState<any[]>([]);
 
+  // NOVO: Estado para guardar as categorias que vêm do banco de dados
+  const [categoriasUsuario, setCategoriasUsuario] = useState<any[]>([]);
+
   const [mesSelecionado, setMesSelecionado] = useState(new Date().toISOString().slice(0, 7));
 
   const [descricao, setDescricao] = useState("");
   const [valor, setValor] = useState("");
-  const [tipo, setTipo] = useState("receita");
+  const [tipo, setTipo] = useState("despesa");
   const [dataLancamento, setDataLancamento] = useState(new Date().toISOString().split("T")[0]);
-  const [categoria, setCategoria] = useState("Outros");
-  const categoriasPadrao = ["Moradia", "Alimentação", "Transporte", "Lazer", "Saúde", "Dívidas", "Investimentos", "Outros"];
+  const [categoria, setCategoria] = useState("");
   
   const [isRecorrente, setIsRecorrente] = useState(false);
   const [mesesRepeticao, setMesesRepeticao] = useState(12);
   const [salvando, setSalvando] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
-
-  const CORES = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
 
   useEffect(() => {
     carregarDados();
@@ -46,12 +46,22 @@ export default function Dashboard() {
 
     const hoje = new Date().toISOString().split("T")[0];
 
+    // Busca TUDO: Transações, Orçamentos, Metas e CATEGORIAS
     const { data: transacoesBanco } = await supabase.from("transactions").select("*").eq("user_id", user.id).order("date", { ascending: false });
-    
-    // CORREÇÃO: Removido o filtro de mês daqui. Agora ele pega os limites globais que você definiu.
     const { data: orcamentos } = await supabase.from("budgets").select("*").eq("user_id", user.id);
-    
     const { data: metas } = await supabase.from("goals").select("*").eq("user_id", user.id);
+    
+    // MÁGICA: Busca as categorias do usuário
+    const { data: categoriasBanco } = await supabase.from("categories").select("*").eq("user_id", user.id);
+
+    // Salva as categorias e seleciona a primeira como padrão no formulário
+    if (categoriasBanco) {
+      setCategoriasUsuario(categoriasBanco);
+      const categoriasDespesa = categoriasBanco.filter(c => c.type === 'despesa');
+      if (categoriasDespesa.length > 0 && categoria === "") {
+        setCategoria(categoriasDespesa[0].name);
+      }
+    }
 
     if (transacoesBanco) {
       let saldoGlobal = 0;
@@ -69,18 +79,39 @@ export default function Dashboard() {
       });
 
       setResumo({ receitas: recMes, despesas: despMes, saldo: saldoGlobal });
-      montarDadosGrafico(transacoesVisiveis);
+      
+      // Passa a lista de categorias para o gráfico usar as cores certas!
+      montarDadosGrafico(transacoesVisiveis, categoriasBanco || []);
       gerarAlertas(transacoesVisiveis, orcamentos || [], metas || []);
     }
     setLoading(false);
   };
 
+  // MÁGICA 2: O gráfico agora usa as cores personalizadas que o usuário escolheu!
+  const montarDadosGrafico = (transacoes: any[], categoriasSistema: any[]) => {
+    const gastosPorCategoria: Record<string, number> = {};
+    
+    transacoes.forEach(t => {
+      if (t.type === 'despesa') gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
+    });
+
+    const dadosFormatados = Object.keys(gastosPorCategoria).map(catName => {
+      // Procura a cor da categoria no banco. Se não achar, usa um cinza padrão.
+      const catInfo = categoriasSistema.find(c => c.name === catName && c.type === 'despesa');
+      return { 
+        name: catName, 
+        value: gastosPorCategoria[catName],
+        color: catInfo ? catInfo.color : '#94a3b8' 
+      };
+    }).sort((a, b) => b.value - a.value);
+
+    setDadosGrafico(dadosFormatados);
+  };
+
   const gerarAlertas = (transacoesVisiveis: any[], orcamentos: any[], metas: any[]) => {
     const novosAlertas: any[] = [];
     metas.forEach(meta => {
-      if (Number(meta.current_amount) >= Number(meta.target_amount)) {
-        novosAlertas.push({ icone: '🎉', mensagem: `Parabéns! Você atingiu sua meta: ${meta.title}!`, estilo: 'bg-green-50 border-green-200 text-green-800' });
-      }
+      if (Number(meta.current_amount) >= Number(meta.target_amount)) novosAlertas.push({ icone: '🎉', mensagem: `Parabéns! Você atingiu sua meta: ${meta.title}!`, estilo: 'bg-green-50 border-green-200 text-green-800' });
     });
 
     const gastosPorCategoria: Record<string, number> = {};
@@ -96,15 +127,6 @@ export default function Dashboard() {
       else if (percentual >= 80) novosAlertas.push({ icone: '⚠️', mensagem: `Atenção: Você consumiu ${percentual.toFixed(0)}% do orçamento de ${orc.category} neste mês.`, estilo: 'bg-yellow-50 border-yellow-200 text-yellow-800' });
     });
     setAlertas(novosAlertas);
-  };
-
-  const montarDadosGrafico = (transacoes: any[]) => {
-    const gastosPorCategoria: Record<string, number> = {};
-    transacoes.forEach(t => {
-      if (t.type === 'despesa') gastosPorCategoria[t.category] = (gastosPorCategoria[t.category] || 0) + Number(t.amount);
-    });
-    const dadosFormatados = Object.keys(gastosPorCategoria).map(key => ({ name: key, value: gastosPorCategoria[key] })).sort((a, b) => b.value - a.value);
-    setDadosGrafico(dadosFormatados);
   };
 
   const exportarPDF = () => {
@@ -127,15 +149,30 @@ export default function Dashboard() {
     doc.save(`FinPlan_Relatorio_${mesSelecionado}.pdf`);
   };
 
+  const mudarTipoEAtualizarCategoria = (novoTipo: string) => {
+    setTipo(novoTipo);
+    // Ao mudar entre Receita/Despesa, seleciona a primeira categoria disponível daquele tipo
+    const catsFiltradas = categoriasUsuario.filter(c => c.type === novoTipo);
+    if (catsFiltradas.length > 0) {
+      setCategoria(catsFiltradas[0].name);
+    } else {
+      setCategoria(""); // Se não tiver, fica vazio
+    }
+  };
+
   const salvarLancamento = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!categoria) {
+      return alert("Por favor, crie uma categoria na tela de Categorias primeiro!");
+    }
+    
     setSalvando(true);
     const valorNumerico = parseFloat(valor.toString().replace(",", "."));
 
     if (editandoId) {
       const { error } = await supabase.from("transactions").update({
         description: descricao, amount: valorNumerico, type: tipo,
-        category: tipo === 'despesa' ? categoria : 'Renda', date: dataLancamento
+        category: categoria, date: dataLancamento // Usa a categoria selecionada!
       }).eq("id", editandoId);
       if (!error) { limparFormulario(); carregarDados(); }
     } else {
@@ -146,7 +183,7 @@ export default function Dashboard() {
       for (let i = 0; i < repeticoes; i++) {
         transacoesParaInserir.push({
           user_id: user.id, description: isRecorrente ? `${descricao} (${i + 1}/${repeticoes})` : descricao,
-          amount: valorNumerico, type: tipo, category: tipo === 'despesa' ? categoria : 'Renda',
+          amount: valorNumerico, type: tipo, category: categoria, // Usa a categoria selecionada!
           date: dataAtual.toISOString().split("T")[0], is_recurring: isRecorrente
         });
         dataAtual.setMonth(dataAtual.getMonth() + 1);
@@ -159,13 +196,16 @@ export default function Dashboard() {
 
   const iniciarEdicao = (t: any) => {
     setEditandoId(t.id); setDescricao(t.description); setValor(t.amount.toString());
-    setTipo(t.type); setCategoria(t.category || "Outros"); setDataLancamento(t.date);
+    setTipo(t.type); setCategoria(t.category || ""); setDataLancamento(t.date);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const limparFormulario = () => {
     setEditandoId(null); setDescricao(""); setValor(""); setIsRecorrente(false);
     setMesesRepeticao(12); setDataLancamento(new Date().toISOString().split("T")[0]);
+    // Reseta para a primeira categoria de despesa
+    const categoriasDespesa = categoriasUsuario.filter(c => c.type === 'despesa');
+    if (categoriasDespesa.length > 0) setCategoria(categoriasDespesa[0].name);
   };
 
   const excluirLancamento = async (id: string) => {
@@ -182,11 +222,13 @@ export default function Dashboard() {
 
   const formatarMoeda = (v: number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 
+  // Filtra as categorias dinâmicas pro select do formulário
+  const categoriasDoTipoSelecionado = categoriasUsuario.filter(c => c.type === tipo);
+
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Carregando painel...</div>;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-12">
-      {/* Menu Superior */}
       <nav className="bg-white border-b border-slate-200 px-4 py-3 md:px-6 md:py-4 flex flex-col md:flex-row justify-between sticky top-0 z-10 gap-3 md:gap-0">
         <div className="flex items-center justify-between w-full md:w-auto">
           <h1 className="text-2xl font-bold text-blue-600">FinPlan</h1>
@@ -199,11 +241,10 @@ export default function Dashboard() {
           <Link href="/planejamento" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Planejamento</Link>
           <Link href="/simulador" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Simulador</Link>
           <Link href="/metas" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Metas</Link>
-          {/* O LINK DE PERFIL SÓ APARECE AQUI SE ESTIVER NO CELULAR */}
+          <Link href="/categorias" className="text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Categorias</Link>
           <Link href="/perfil" className="md:hidden text-sm font-medium text-slate-500 hover:text-slate-800 transition pb-1">Meu Perfil</Link>
         </div>
 
-        {/* LADO DIREITO: NOME CLICÁVEL (COMPUTADOR) */}
         <div className="hidden md:flex items-center gap-4">
           <Link href="/perfil" className="text-sm font-medium text-slate-700 bg-slate-100 px-3 py-1.5 rounded-full hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 border border-transparent transition flex items-center gap-2 shadow-sm">
             👤 {user?.user_metadata?.full_name || user?.email}
@@ -281,19 +322,25 @@ export default function Dashboard() {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Tipo</label>
                   <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => setTipo("receita")} className={`py-2 rounded-lg font-medium text-sm transition border ${tipo === "receita" ? "bg-green-100 text-green-700 border-green-200" : "bg-white text-slate-600 border-slate-200"}`}>Receita</button>
-                    <button type="button" onClick={() => setTipo("despesa")} className={`py-2 rounded-lg font-medium text-sm transition border ${tipo === "despesa" ? "bg-red-100 text-red-700 border-red-200" : "bg-white text-slate-600 border-slate-200"}`}>Despesa</button>
+                    <button type="button" onClick={() => mudarTipoEAtualizarCategoria("receita")} className={`py-2 rounded-lg font-medium text-sm transition border ${tipo === "receita" ? "bg-green-100 text-green-700 border-green-200" : "bg-white text-slate-600 border-slate-200"}`}>Receita</button>
+                    <button type="button" onClick={() => mudarTipoEAtualizarCategoria("despesa")} className={`py-2 rounded-lg font-medium text-sm transition border ${tipo === "despesa" ? "bg-red-100 text-red-700 border-red-200" : "bg-white text-slate-600 border-slate-200"}`}>Despesa</button>
                   </div>
                 </div>
 
-                {tipo === "despesa" && (
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1 mt-2">Categoria</label>
-                    <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none bg-white">
-                      {categoriasPadrao.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                    </select>
-                  </div>
-                )}
+                {/* CAMPO DE CATEGORIA DINÂMICA */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1 mt-2 justify-between">
+                    Categoria
+                    {categoriasDoTipoSelecionado.length === 0 && <Link href="/categorias" className="text-xs text-blue-600 hover:underline">Criar nova</Link>}
+                  </label>
+                  <select value={categoria} onChange={(e) => setCategoria(e.target.value)} required className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 outline-none bg-white">
+                    {categoriasDoTipoSelecionado.length === 0 ? (
+                      <option value="" disabled>Nenhuma categoria criada</option>
+                    ) : (
+                      categoriasDoTipoSelecionado.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)
+                    )}
+                  </select>
+                </div>
 
                 {!editandoId && (
                   <div className="pt-2 border-t border-slate-100 mt-4">
@@ -326,7 +373,8 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie data={dadosGrafico} innerRadius={80} outerRadius={110} paddingAngle={5} dataKey="value">
-                        {dadosGrafico.map((entry, index) => <Cell key={`cell-${index}`} fill={CORES[index % CORES.length]} />)}
+                        {/* A cor agora vem de data.color, que pegamos do banco! */}
+                        {dadosGrafico.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                       </Pie>
                       <Tooltip formatter={(value: any) => formatarMoeda(Number(value))} />
                       <Legend verticalAlign="bottom" height={36} iconType="circle" />
@@ -342,30 +390,38 @@ export default function Dashboard() {
                 <div className="text-center py-10 text-slate-500">Nenhum lançamento neste mês.</div>
               ) : (
                 <div className="space-y-3">
-                  {transactions.map((t) => (
-                    <div key={t.id} className="flex justify-between items-center p-4 hover:bg-slate-50 rounded-xl border border-slate-100 transition group">
-                      <div className="flex items-center gap-4">
-                        <div className={`w-2 h-10 rounded-full ${t.type === 'receita' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className="font-semibold text-slate-800">{t.description}</p>
-                            {t.is_recurring && <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Recorrente</span>}
+                  {transactions.map((t) => {
+                    // Busca a cor da categoria para colocar no pontinho!
+                    const corCat = categoriasUsuario.find(c => c.name === t.category && c.type === t.type)?.color || '#cbd5e1';
+
+                    return (
+                      <div key={t.id} className="flex justify-between items-center p-4 hover:bg-slate-50 rounded-xl border border-slate-100 transition group">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-2 h-10 rounded-full ${t.type === 'receita' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="font-semibold text-slate-800">{t.description}</p>
+                              {t.is_recurring && <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase">Recorrente</span>}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: corCat }}></div>
+                              <p className="text-xs font-medium text-slate-500">{new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR')} {t.category && ` • ${t.category}`}</p>
+                            </div>
                           </div>
-                          <p className="text-xs font-medium text-slate-500">{new Date(t.date + "T12:00:00").toLocaleDateString('pt-BR')} {t.category && ` • ${t.category}`}</p>
+                        </div>
+                        
+                        <div className="flex items-center gap-4">
+                          <p className={`font-bold ${t.type === 'receita' ? 'text-green-600' : 'text-red-600'}`}>
+                            {t.type === 'receita' ? '+' : '-'}{formatarMoeda(t.amount)}
+                          </p>
+                          <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => iniciarEdicao(t)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Editar">✏️</button>
+                            <button onClick={() => excluirLancamento(t.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Excluir">🗑️</button>
+                          </div>
                         </div>
                       </div>
-                      
-                      <div className="flex items-center gap-4">
-                        <p className={`font-bold ${t.type === 'receita' ? 'text-green-600' : 'text-red-600'}`}>
-                          {t.type === 'receita' ? '+' : '-'}{formatarMoeda(t.amount)}
-                        </p>
-                        <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => iniciarEdicao(t)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Editar">✏️</button>
-                          <button onClick={() => excluirLancamento(t.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Excluir">🗑️</button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
